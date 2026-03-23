@@ -34,7 +34,7 @@ function ProductTypesSection() {
   function handleAdd() {
     if (!form.code.trim() || !form.prefix.trim() || !form.label.trim()) { setErr('All fields required'); return; }
     if (productTypes.find(t => t.code === form.code.toUpperCase())) { setErr('Code already exists'); return; }
-    addProductType({ code: form.code.toUpperCase(), prefix: form.prefix.toLowerCase(), label: form.label, category: form.category, color: form.color });
+    addProductType({ code: form.code.toUpperCase(), prefix: form.prefix.toLowerCase(), label: form.label, category: form.category, color: form.color, itemCodes: [form.code.toUpperCase()] });
     setForm({ code: '', prefix: '', label: '', category: 'regular', color: '#60a5fa' });
     setErr('');
   }
