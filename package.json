@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "vercel-build": "chmod +x node_modules/.bin/* && tsc && vite build",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
