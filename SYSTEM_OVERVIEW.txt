@@ -1,0 +1,245 @@
+================================================================================
+  FRP PRODUCTION DASHBOARD — SYSTEM OVERVIEW
+  Last updated: 2026-03-13
+================================================================================
+
+TECHNOLOGY STACK
+----------------
+  Frontend    : React 18.3.1 + TypeScript 5.4.5
+  Build Tool  : Vite 5.2.12 (dev on port 5173, proxy /api → localhost:8000)
+  Styling     : Tailwind CSS 3.4.4 (dark theme, amber accent)
+  Routing     : React Router DOM 6.23.1
+  Database    : Supabase (PostgreSQL) — @supabase/supabase-js 2.43.4
+  Backend API : Custom backend at VITE_API_URL (JWT auth endpoints)
+  Sheets Sync : Google Apps Script Web App (webhook, fire-and-forget)
+
+
+DIRECTORY STRUCTURE
+-------------------
+  frontend/
+  ├── src/
+  │   ├── main.tsx                        React entry point
+  │   ├── App.tsx                         Router + auth wrapper + DEV_PREVIEW bypass
+  │   ├── index.css                       Global styles (Tailwind + scrollbar)
+  │   ├── lib/
+  │   │   ├── supabase.ts                 Supabase client (uses env vars)
+  │   │   └── sheetsSync.ts              Google Sheets webhook (fire-and-forget)
+  │   ├── auth/
+  │   │   ├── AuthContext.tsx             JWT auth state, login/logout, localStorage
+  │   │   ├── LoginPage.tsx              Email + password form → POST /auth/login
+  │   │   ├── ProtectedRoute.tsx         Route guard: checks auth + role
+  │   │   └── roleGuard.ts               ROLE_ROUTES, DEFAULT_ROUTE, canAccess()
+  │   └── dashboards/
+  │       └── production/
+  │           ├── ProductionDashboard.tsx  Shell: header, 5 tabs, loading/error state
+  │           ├── useProductionData.ts     Supabase CRUD hook + derived stock logic
+  │           ├── productCatalog.ts        Product types, sizes, capacities, weights
+  │           ├── ProductionTab.tsx        Production entry form + KPIs + table
+  │           ├── FinishingTab.tsx         Finishing entry form + progress + backlog
+  │           ├── DispatchTab.tsx          Dispatch form + stock warnings + charts
+  │           ├── StockTab.tsx             Real-time stock positions + filters
+  │           ├── RawMaterialsTab.tsx      Material ledger (3 sub-tabs)
+  │           ├── MonthlyOverviewTab.tsx   6-month executive summary
+  │           └── SettingsPanel.tsx        Add product types/sizes/capacities
+  ├── supabase/
+  │   └── migrations/
+  │       └── 001_initial_schema.sql      Supabase table definitions + RLS
+  ├── google-apps-script/
+  │   └── Code.gs                         Apps Script for Google Sheets webhook
+  ├── index.html
+  ├── package.json
+  ├── vite.config.ts
+  ├── tailwind.config.cjs
+  ├── .env.local                          Dev env (VITE_DEV_PREVIEW=true)
+  └── .env.example                        Env template
+
+
+AUTHENTICATION & AUTHORIZATION
+-------------------------------
+  Flow:
+    1. User visits /login
+    2. LoginPage POSTs {email, password} to VITE_API_URL/auth/login
+    3. JWT access_token + refresh_token saved to localStorage
+    4. AuthContext provides user object globally via useAuth() hook
+    5. ProtectedRoute checks role against allowedRoles prop
+    6. Unauthorized roles redirected to their own DEFAULT_ROUTE
+
+  User object: { id, email, role, full_name, department, access_token }
+
+  Roles (7 total):
+    executive   → all dashboards
+    sales       → /sales
+    accounts    → /accounts
+    production  → /production
+    dispatch    → /dispatch
+    operations  → /operations
+    quotation   → /quotation
+
+  DEV PREVIEW: VITE_DEV_PREVIEW=true in .env.local bypasses auth entirely,
+  loading the production dashboard directly. Set to false for production.
+
+
+ROUTING
+-------
+  /login          → LoginPage (public)
+  /               → RootRedirect (role-based redirect)
+  /executive      → Executive Dashboard (placeholder)
+  /sales          → Sales Dashboard (placeholder)
+  /accounts       → Accounts Dashboard (placeholder)
+  /production     → ProductionDashboard (FULLY IMPLEMENTED)
+  /dispatch       → Dispatch Dashboard (placeholder)
+  /operations     → Operations Dashboard (placeholder)
+  /quotation      → Quotation Dashboard (placeholder)
+  *               → Redirect to /
+
+
+PRODUCTION DASHBOARD — MAIN FEATURE
+-------------------------------------
+  Purpose: Track FRP (Fiber Reinforced Plastic) manufacturing operations.
+  Theme:   Dark (bg #0f1117, amber #f59e0b accent, monospace fonts)
+
+  Tabs:
+    1. Production & Finishing  (2 sub-tabs: Production | Finishing)
+    2. Dispatch
+    3. Stock
+    4. Raw Materials
+    5. Monthly Overview
+
+
+SUPABASE DATABASE SCHEMA
+-------------------------
+  Tables (all have UUID primary key + created_at):
+
+  production_entries:
+    date DATE, code TEXT, color TEXT, cover_qty INT, frame_qty INT
+
+  finishing_entries:
+    date DATE, code TEXT, color TEXT, cover_finished INT, frame_finished INT
+
+  dispatch_entries:
+    date DATE, code TEXT, color TEXT, cover_dispatched INT, frame_dispatched INT
+
+  raw_material_entries:
+    date DATE, material TEXT, category TEXT (INWARD|OUTWARD),
+    department TEXT (PRODUCTION|FINISHING), unit TEXT, qty NUMERIC
+
+  Note: Derived fields (setQty, weights, etc.) are computed in the frontend
+  from productCatalog.ts — they are NOT stored in the database.
+
+
+DATA FLOW
+---------
+  1. On dashboard mount → fetch all 4 tables from Supabase
+  2. Build derived fields using productCatalog helpers
+  3. Store in React state (local cache)
+  4. User adds/edits/deletes → optimistic UI update immediately
+  5. Async Supabase CRUD in background; rollback on error
+  6. On add (production/finishing/dispatch) → fire-and-forget POST to
+     Google Sheets webhook (sheetsSync.ts) to sync with Google Sheet
+
+  Stock positions are derived on-the-fly:
+    stockCover = Σ(producedCover) − Σ(dispatchedCover)
+    stockFrame = Σ(producedFrame) − Σ(dispatchedFrame)
+    stockSet   = min(stockCover, stockFrame)
+    Status: BACKLOG (set<0), PARTIAL (cover/frame<0), OK (all ≥0)
+
+
+PRODUCT CATALOG (productCatalog.ts)
+-------------------------------------
+  Product Types (8): MHC, EMHC, ONGC, CGT, ROUND, DS, RCS, WGC
+  Sizes (24): 300×300 mm → 1600×1600 mm, commercial inches, DAI variants
+  Capacities (11): 2.5T, 3T, 5T, 12.5T, 25T, 30T, 40T, 60T, 90T, E600, F900
+  Weight entries (~27): maps code → {coverKg, frameKg, setKg}
+  Raw Materials (23): resins, fiberglass, fillers, catalysts, colors, tools
+
+  Code format: {prefix}_{size}_{capacity.toLowerCase()}
+  Example: m_600*600_25t (MHC, 600×600 mm, 25 Tonne)
+
+
+GOOGLE SHEETS SYNC
+-------------------
+  Mechanism:
+    - Google Apps Script Web App deployed at VITE_SHEETS_WEBHOOK_URL
+    - On every INSERT (production, finishing, dispatch), sheetsSync.ts fires
+      a fire-and-forget POST with mode: no-cors
+    - Apps Script receives the JSON body and appends a row to the
+      appropriate sheet ("Production", "Finishing", or "Dispatch")
+
+  Setup steps (one-time):
+    1. Open Google Sheets, go to Extensions → Apps Script
+    2. Paste the code from google-apps-script/Code.gs
+    3. Deploy as Web App (Execute as: Me, Access: Anyone)
+    4. Copy the deployment URL into VITE_SHEETS_WEBHOOK_URL env var
+
+  Sheets created automatically:
+    - "Production"  : Date, Code, Color, Cover Qty, Frame Qty, Set Qty,
+                      Cover KG, Frame KG, Total Weight KG, Timestamp
+    - "Finishing"   : Date, Code, Color, Cover Finished, Frame Finished,
+                      Set Finished, Timestamp
+    - "Dispatch"    : Date, Code, Color, Cover Dispatched, Frame Dispatched,
+                      Set Dispatched, Cover KG, Frame KG, Total Weight KG, Timestamp
+
+
+ENVIRONMENT VARIABLES
+----------------------
+  VITE_API_URL              Backend URL (default: http://localhost:8000)
+  VITE_SUPABASE_URL         Supabase project URL
+  VITE_SUPABASE_ANON_KEY    Supabase anon/public key
+  VITE_SHEETS_WEBHOOK_URL   Google Apps Script Web App deployment URL
+  VITE_DEV_PREVIEW          Set true to bypass auth (dev only)
+
+
+RUNNING THE APP
+---------------
+  npm run dev       Start Vite dev server on port 5173
+  npm run build     TypeScript check + Vite build to dist/
+  npm run preview   Serve built dist/
+
+
+================================================================================
+  PENDING TASKS
+================================================================================
+
+BACKEND / DATABASE
+  [ ] Connect Sales, Accounts, Dispatch, Operations, Quotation dashboards to backend
+  [ ] Add Supabase Row Level Security (RLS) policies per user role
+  [ ] Implement real-time subscriptions (supabase.channel) for live updates
+  [ ] Add data export to PDF and Excel from each tab
+  [ ] Implement audit log table (who changed what, when)
+  [ ] Add user activity tracking / access logs
+
+AUTHENTICATION
+  [ ] Implement refresh token rotation (auto re-login on access token expiry)
+  [ ] Add "Forgot Password" flow using Supabase Auth or custom backend
+  [ ] Migrate auth from custom backend JWT to Supabase Auth (optional)
+
+DASHBOARDS TO BUILD
+  [ ] Executive Dashboard (/executive) — cross-department overview
+  [ ] Sales Dashboard (/sales) — order pipeline, invoices, targets
+  [ ] Accounts Dashboard (/accounts) — P&L, payments, receivables
+  [ ] Dispatch Dashboard (/dispatch) — outbound logistics, delivery tracking
+  [ ] Operations Dashboard (/operations) — workforce, attendance, downtime
+  [ ] Quotation Tracker (/quotation) — quote pipeline, win/loss rates
+
+PRODUCTION DASHBOARD ENHANCEMENTS
+  [ ] Persist custom product types/sizes/capacities to Supabase (not just in-memory)
+  [ ] Add photo/attachment upload for production entries
+  [ ] Add customer/PO number field to dispatch entries
+  [ ] Notification system: stock alerts, backlog warnings (email or in-app)
+  [ ] Add updateRawMaterial (currently only add + delete)
+  [ ] Finishing tab: show finishing-vs-dispatch gap per SKU
+  [ ] Allow dispatching unfinished items (bypass finishing for direct dispatch)
+
+PERFORMANCE & RELIABILITY
+  [ ] Add error boundaries around each tab
+  [ ] Implement optimistic rollback UI feedback (toast on Supabase error)
+  [ ] Paginate large data sets (production entries can grow very large)
+  [ ] Add service worker / offline support for intermittent connectivity
+
+DEVOPS
+  [ ] Set up CI/CD pipeline (GitHub Actions → Vercel/Netlify)
+  [ ] Add environment-specific Supabase projects (dev/staging/prod)
+  [ ] Configure Supabase backups and point-in-time recovery
+  [ ] Add Sentry or similar for frontend error tracking
+
+================================================================================
